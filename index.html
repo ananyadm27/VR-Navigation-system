@@ -1,0 +1,540 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>REAL AVATAR CONTROL</title>
+<style>
+:root {
+    --panel: rgba(8, 12, 24, 0.78);
+    --panel-border: rgba(255, 255, 255, 0.12);
+    --text: #eef4ff;
+    --muted: #aeb8d3;
+}
+
+html, body {
+    margin: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: radial-gradient(circle at top, #12284f 0%, #06142e 45%, #030816 100%);
+    font-family: Arial, Helvetica, sans-serif;
+}
+
+#panel {
+    position: absolute;
+    top: 20px;
+    left: 20px;
+    width: 320px;
+    padding: 18px 20px;
+    border: 1px solid var(--panel-border);
+    border-radius: 18px;
+    background: var(--panel);
+    color: var(--text);
+    z-index: 10;
+    backdrop-filter: blur(10px);
+    box-shadow: 0 18px 48px rgba(0, 0, 0, 0.35);
+}
+
+#panel h1 {
+    margin: 0 0 10px;
+    font-size: 28px;
+    letter-spacing: 0.08em;
+}
+
+#panel p {
+    margin: 4px 0;
+    color: var(--muted);
+    font-size: 14px;
+}
+
+.row {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    margin-top: 10px;
+    font-size: 16px;
+}
+
+.label {
+    color: var(--muted);
+}
+
+.value {
+    font-weight: 700;
+}
+
+#esp32Url {
+    flex: 1;
+    min-width: 170px;
+    padding: 6px 8px;
+    border-radius: 8px;
+    border: 1px solid var(--panel-border);
+    background: rgba(255,255,255,0.08);
+    color: var(--text);
+}
+
+#saveUrl {
+    width: 100%;
+    padding: 8px 10px;
+    border-radius: 8px;
+    border: 1px solid var(--panel-border);
+    background: #17325f;
+    color: var(--text);
+    cursor: pointer;
+}
+
+#sceneHint {
+    position: absolute;
+    right: 20px;
+    top: 20px;
+    color: rgba(255,255,255,0.72);
+    font-size: 13px;
+    text-align: right;
+    z-index: 10;
+}
+</style>
+</head>
+<body>
+<div id="panel">
+    <h1>REAL AVATAR</h1>
+    <div class="row"><span class="label">X</span><span class="value" id="x">0</span></div>
+    <div class="row"><span class="label">Y</span><span class="value" id="y">0</span></div>
+    <div class="row"><span class="label">Z</span><span class="value" id="z">0</span></div>
+    <div class="row"><span class="label">Move</span><span class="value" id="recommendation">safe</span></div>
+</div>
+<div id="sceneHint">Top-down room map<br>Green = safe, amber = stop, red = danger</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script>
+const DEFAULT_ESP32_DATA_URL = 'http://172.28.147.138/data';
+const DANGER_DISTANCE_MM = 180;
+const STOP_DISTANCE_MM = 260;
+const DEAD_ZONE_DEG = 4;
+const MAX_TILT_DEG = 28;
+const ROOM_MOVE_RANGE = 4.2;
+const POSITION_SMOOTHING = 0.03;
+const ENV_SCALE = 5;
+const TABLE_HALF_X = 8.5 * ENV_SCALE;
+const TABLE_HALF_Z = 6.0 * ENV_SCALE;
+const AVATAR_RADIUS = 0.35;
+const WALL_MARGIN = 0.30;
+const PROBE_STEP = 0.28;
+
+function clamp(value, min, max) {
+    return Math.max(min, Math.min(max, value));
+}
+
+function getEsp32DataUrl() {
+    const queryUrl = new URLSearchParams(window.location.search).get('esp32');
+    return queryUrl || window.localStorage.getItem('esp32DataUrl') || DEFAULT_ESP32_DATA_URL;
+}
+
+const ESP32_DATA_URL = getEsp32DataUrl();
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x06142e);
+scene.fog = new THREE.Fog(0x06142e, 18 * ENV_SCALE, 54 * ENV_SCALE);
+
+const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+camera.position.set(0, 8.5, 10.5);
+camera.lookAt(0, 0, 0);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+document.body.appendChild(renderer.domElement);
+
+const light = new THREE.DirectionalLight(0xffffff, 2.0);
+light.position.set(8, 16, 10);
+scene.add(light);
+scene.add(new THREE.AmbientLight(0xffffff, 0.95));
+
+const controls = new THREE.OrbitControls(camera, renderer.domElement);
+
+const walls = [];
+
+function addWall(width, height, depth, x, y, z, color) {
+    const mesh = new THREE.Mesh(
+        new THREE.BoxGeometry(width, height, depth),
+        new THREE.MeshStandardMaterial({ color, roughness: 0.95 })
+    );
+    mesh.position.set(x, y, z);
+    scene.add(mesh);
+    walls.push(new THREE.Box3().setFromObject(mesh).expandByScalar(WALL_MARGIN));
+    return mesh;
+}
+
+function addFloorPiece(width, depth, x, z, color) {
+    const mesh = new THREE.Mesh(
+        new THREE.BoxGeometry(width, 0.06, depth),
+        new THREE.MeshStandardMaterial({ color, roughness: 1 })
+    );
+    mesh.position.set(x, -0.03, z);
+    scene.add(mesh);
+    return mesh;
+}
+
+function buildRoomMap() {
+    addFloorPiece(16.8 * ENV_SCALE, 12.0 * ENV_SCALE, 0, 0, 0xcaa74b);
+
+    // Outer walls with top opening look and corridor openings
+    addWall(16.8 * ENV_SCALE, 0.35 * ENV_SCALE, 0.25 * ENV_SCALE, 0, 0.12 * ENV_SCALE, -6.0 * ENV_SCALE, 0x4d79b6);
+    addWall(16.8 * ENV_SCALE, 0.35 * ENV_SCALE, 0.25 * ENV_SCALE, 0, 0.12 * ENV_SCALE, 6.0 * ENV_SCALE, 0x4d79b6);
+    addWall(0.25 * ENV_SCALE, 0.35 * ENV_SCALE, 12.0 * ENV_SCALE, -8.5 * ENV_SCALE, 0.12 * ENV_SCALE, 0, 0x4d79b6);
+    addWall(0.25 * ENV_SCALE, 0.35 * ENV_SCALE, 12.0 * ENV_SCALE, 8.5 * ENV_SCALE, 0.12 * ENV_SCALE, 0, 0x4d79b6);
+
+    // Vertical room partitions with gaps to make compartments
+    addWall(0.18 * ENV_SCALE, 0.35 * ENV_SCALE, 4.6 * ENV_SCALE, -2.4 * ENV_SCALE, 0.12 * ENV_SCALE, -3.0 * ENV_SCALE, 0xcc7a5f);
+    addWall(0.18 * ENV_SCALE, 0.35 * ENV_SCALE, 4.0 * ENV_SCALE, -2.4 * ENV_SCALE, 0.12 * ENV_SCALE, 2.8 * ENV_SCALE, 0xcc7a5f);
+
+    addWall(0.18 * ENV_SCALE, 0.35 * ENV_SCALE, 4.2 * ENV_SCALE, 2.4 * ENV_SCALE, 0.12 * ENV_SCALE, -2.8 * ENV_SCALE, 0x65a7e8);
+    addWall(0.18 * ENV_SCALE, 0.35 * ENV_SCALE, 4.6 * ENV_SCALE, 2.4 * ENV_SCALE, 0.12 * ENV_SCALE, 3.1 * ENV_SCALE, 0x65a7e8);
+
+    // Horizontal partial walls to create rooms with top openings
+    addWall(4.2 * ENV_SCALE, 0.35 * ENV_SCALE, 0.18 * ENV_SCALE, -5.4 * ENV_SCALE, 0.12 * ENV_SCALE, -1.0 * ENV_SCALE, 0xe0c15a);
+    addWall(3.8 * ENV_SCALE, 0.35 * ENV_SCALE, 0.18 * ENV_SCALE, -5.2 * ENV_SCALE, 0.12 * ENV_SCALE, 2.4 * ENV_SCALE, 0xe0c15a);
+
+    addWall(4.0 * ENV_SCALE, 0.35 * ENV_SCALE, 0.18 * ENV_SCALE, 5.4 * ENV_SCALE, 0.12 * ENV_SCALE, -0.8 * ENV_SCALE, 0xe0c15a);
+    addWall(4.2 * ENV_SCALE, 0.35 * ENV_SCALE, 0.18 * ENV_SCALE, 5.4 * ENV_SCALE, 0.12 * ENV_SCALE, 2.3 * ENV_SCALE, 0xe0c15a);
+
+    // Decorative obstacle cubes inside rooms
+    addWall(0.8 * ENV_SCALE, 0.7 * ENV_SCALE, 0.8 * ENV_SCALE, -5.2 * ENV_SCALE, 0.35 * ENV_SCALE, 3.6 * ENV_SCALE, 0xdb6b5a);
+    addWall(0.9 * ENV_SCALE, 0.7 * ENV_SCALE, 0.9 * ENV_SCALE, -0.2 * ENV_SCALE, 0.35 * ENV_SCALE, -3.4 * ENV_SCALE, 0x5ca7e8);
+    addWall(0.8 * ENV_SCALE, 0.7 * ENV_SCALE, 0.8 * ENV_SCALE, 5.0 * ENV_SCALE, 0.35 * ENV_SCALE, 2.4 * ENV_SCALE, 0xffd24f);
+}
+
+buildRoomMap();
+
+let avatar = null;
+function createFallbackAvatar() {
+    const group = new THREE.Group();
+    const body = new THREE.Mesh(
+        new THREE.BoxGeometry(0.7, 0.9, 0.7),
+        new THREE.MeshStandardMaterial({ color: 0x8ef0b7, roughness: 0.55, metalness: 0.08 })
+    );
+    body.position.y = 0.45;
+    const head = new THREE.Mesh(
+        new THREE.SphereGeometry(0.22, 20, 16),
+        new THREE.MeshStandardMaterial({ color: 0xeef4ff, roughness: 0.45, metalness: 0.05 })
+    );
+    head.position.y = 1.0;
+    const nose = new THREE.Mesh(
+        new THREE.BoxGeometry(0.12, 0.12, 0.26),
+        new THREE.MeshStandardMaterial({ color: 0x17325f, roughness: 0.65 })
+    );
+    nose.position.set(0, 0.92, 0.42);
+    group.add(body, head, nose);
+    return group;
+}
+
+avatar = createFallbackAvatar();
+avatar.position.set(0, 0, 0);
+scene.add(avatar);
+
+new THREE.GLTFLoader().load(
+    'avatar.glb',
+    function (gltf) {
+        scene.remove(avatar);
+        avatar = gltf.scene;
+        avatar.scale.set(1, 1, 1);
+        avatar.position.set(0, 0.15, 0);
+        scene.add(avatar);
+    },
+    undefined,
+    function (error) {
+        console.log(error);
+        updateStatus('Using fallback avatar because avatar.glb was not found', true);
+    }
+);
+
+let baseX = null;
+let baseY = null;
+let baseZ = null;
+let baseRoll = null;
+let basePitch = null;
+let targetVelocityX = 0;
+let targetVelocityZ = 0;
+let latestSafety = 'safe';
+let fetching = false;
+
+function updateStatus(message, isError = false) {
+    console.log(message);
+}
+
+function updateRecommendationUI(value) {
+    const element = document.getElementById('recommendation');
+    element.textContent = value;
+    const lower = value.toLowerCase();
+    if (lower.includes('danger')) {
+        element.style.color = '#ff8f8f';
+    } else if (lower.includes('stop')) {
+        element.style.color = '#ffd37a';
+    } else {
+        element.style.color = '#8ef0b7';
+    }
+}
+
+function angleFromAccel(x, y, z) {
+    const roll = Math.atan2(y, z) * 57.2958;
+    const pitch = Math.atan2(-x, Math.sqrt((y * y) + (z * z))) * 57.2958;
+    return { roll, pitch };
+}
+
+function centeredDelta(value, base, deadZone) {
+    const delta = value - base;
+    return Math.abs(delta) < deadZone ? 0 : delta;
+}
+
+function getProximityStatus(x, z) {
+    const dangerDist = 0.3;
+    const stopDist = 0.8;
+
+    let isDanger = false;
+    let isStop = false;
+
+    if (Math.abs(x) > TABLE_HALF_X - AVATAR_RADIUS - dangerDist || 
+        Math.abs(z) > TABLE_HALF_Z - AVATAR_RADIUS - dangerDist) {
+        isDanger = true;
+    } else if (Math.abs(x) > TABLE_HALF_X - AVATAR_RADIUS - stopDist || 
+               Math.abs(z) > TABLE_HALF_Z - AVATAR_RADIUS - stopDist) {
+        isStop = true;
+    }
+
+    const dangerBox = new THREE.Box3(
+        new THREE.Vector3(x - AVATAR_RADIUS - dangerDist, -0.5, z - AVATAR_RADIUS - dangerDist),
+        new THREE.Vector3(x + AVATAR_RADIUS + dangerDist, 1.2, z + AVATAR_RADIUS + dangerDist)
+    );
+    const stopBox = new THREE.Box3(
+        new THREE.Vector3(x - AVATAR_RADIUS - stopDist, -0.5, z - AVATAR_RADIUS - stopDist),
+        new THREE.Vector3(x + AVATAR_RADIUS + stopDist, 1.2, z + AVATAR_RADIUS + stopDist)
+    );
+
+    for (const wall of walls) {
+        if (!isDanger && wall.intersectsBox(dangerBox)) isDanger = true;
+        if (!isStop && wall.intersectsBox(stopBox)) isStop = true;
+        if (isDanger && isStop) break;
+    }
+
+    if (isDanger) return 'danger';
+    if (isStop) return 'stop';
+    return 'safe';
+}
+
+function boxAt(x, z) {
+    return new THREE.Box3(
+        new THREE.Vector3(x - AVATAR_RADIUS, -0.5, z - AVATAR_RADIUS),
+        new THREE.Vector3(x + AVATAR_RADIUS, 1.2, z + AVATAR_RADIUS)
+    );
+}
+
+function blockedAt(x, z) {
+    if (Math.abs(x) > TABLE_HALF_X - AVATAR_RADIUS || Math.abs(z) > TABLE_HALF_Z - AVATAR_RADIUS) {
+        return true;
+    }
+    const avatarBox = boxAt(x, z);
+    for (const wall of walls) {
+        if (wall.intersectsBox(avatarBox)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+function directionProbe(x, z, dx, dz, steps = 100) {
+    let probeX = x;
+    let probeZ = z;
+    let freeSteps = 0;
+    for (let i = 0; i < steps; i++) {
+        probeX += dx;
+        probeZ += dz;
+        if (blockedAt(probeX, probeZ)) {
+            break;
+        }
+        freeSteps++;
+    }
+    return freeSteps;
+}
+
+function recommendNextMove(x, z) {
+    const forward = directionProbe(x, z, 0, -PROBE_STEP);
+    const back = directionProbe(x, z, 0, PROBE_STEP);
+    const left = directionProbe(x, z, -PROBE_STEP, 0);
+    const right = directionProbe(x, z, PROBE_STEP, 0);
+
+    const options = [
+        { label: 'move forward', score: forward },
+        { label: 'move back', score: back },
+        { label: 'turn left', score: left },
+        { label: 'turn right', score: right }
+    ];
+
+    let best = options[0];
+    for (let i = 1; i < options.length; i++) {
+        if (options[i].score > best.score) {
+            best = options[i];
+        }
+    }
+
+    if (best.score <= 1) {
+        return 'stop';
+    }
+
+    return best.label;
+}
+
+async function pollSensor() {
+    if (fetching) {
+        return;
+    }
+    fetching = true;
+
+    try {
+        const activeUrl = ESP32_DATA_URL;
+        const response = await fetch(activeUrl, { cache: 'no-store', mode: 'cors' });
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+        const x = Number(data.x);
+        const y = Number(data.y);
+        const z = Number(data.z);
+        const distance = Number(data.frontDistance ?? data.distance);
+
+        document.getElementById('x').textContent = x.toFixed(2);
+        document.getElementById('y').textContent = y.toFixed(2);
+        document.getElementById('z').textContent = z.toFixed(2);
+
+        updateStatus(`Connected: ${activeUrl}`);
+
+        if (baseX === null || baseY === null || baseZ === null) {
+            baseX = x;
+            baseY = y;
+            baseZ = z;
+            const baseAnglesInit = angleFromAccel(x, y, z);
+            baseRoll = baseAnglesInit.roll;
+            basePitch = baseAnglesInit.pitch;
+            targetVelocityX = 0;
+            targetVelocityZ = 0;
+            latestSafety = 'safe';
+            updateRecommendationUI('safe');
+            return;
+        }
+
+        const baseAngles = { roll: baseRoll, pitch: basePitch };
+        const currentAngles = angleFromAccel(x, y, z);
+
+        let rollDelta = centeredDelta(currentAngles.roll, baseAngles.roll, DEAD_ZONE_DEG);
+        let pitchDelta = centeredDelta(currentAngles.pitch, baseAngles.pitch, DEAD_ZONE_DEG);
+
+        rollDelta = clamp(rollDelta, -MAX_TILT_DEG, MAX_TILT_DEG);
+        pitchDelta = clamp(pitchDelta, -MAX_TILT_DEG, MAX_TILT_DEG);
+
+        // Map tilt to continuous velocity (joystick style)
+        targetVelocityX = (rollDelta / MAX_TILT_DEG) * 0.06 * ENV_SCALE;
+        targetVelocityZ = (-pitchDelta / MAX_TILT_DEG) * 0.06 * ENV_SCALE;
+
+        const ax = avatar ? avatar.position.x : 0;
+        const az = avatar ? avatar.position.z : 0;
+
+        latestSafety = getProximityStatus(ax, az);
+        const recommended = recommendNextMove(ax, az);
+
+        if (latestSafety === 'danger' || latestSafety === 'stop') {
+            updateRecommendationUI(`${latestSafety.toUpperCase()} - ${recommended}`);
+        } else {
+            updateRecommendationUI(recommended);
+        }
+    } catch (error) {
+        console.log(error);
+        updateStatus(`Fetch failed: ${error.message}`, true);
+    } finally {
+        fetching = false;
+    }
+}
+
+function moveAvatar() {
+    if (!avatar) {
+        return;
+    }
+
+    let vx = targetVelocityX;
+    let vz = targetVelocityZ;
+
+    if (latestSafety === 'danger' || latestSafety === 'stop') {
+        // Slow down rapidly or stop when sensor detects danger
+        vx *= 0.1;
+        vz *= 0.1;
+    }
+
+    if (Math.abs(vx) < 0.001) vx = 0;
+    if (Math.abs(vz) < 0.001) vz = 0;
+
+    const nextX = avatar.position.x + vx;
+    const nextZ = avatar.position.z + vz;
+
+    let moved = false;
+
+    if (!blockedAt(nextX, nextZ)) {
+        avatar.position.x = nextX;
+        avatar.position.z = nextZ;
+        moved = true;
+    } else {
+        // Try sliding along walls
+        if (!blockedAt(nextX, avatar.position.z)) {
+            avatar.position.x = nextX;
+            moved = true;
+        } else if (!blockedAt(avatar.position.x, nextZ)) {
+            avatar.position.z = nextZ;
+            moved = true;
+        } else {
+            if (latestSafety === 'safe') {
+                updateRecommendationUI(recommendNextMove(avatar.position.x, avatar.position.z));
+            }
+        }
+    }
+
+    avatar.position.x = clamp(avatar.position.x, -TABLE_HALF_X + AVATAR_RADIUS, TABLE_HALF_X - AVATAR_RADIUS);
+    avatar.position.z = clamp(avatar.position.z, -TABLE_HALF_Z + AVATAR_RADIUS, TABLE_HALF_Z - AVATAR_RADIUS);
+    
+    // Rotate avatar to face movement direction smoothly
+    if (moved && (Math.abs(vx) > 0.001 || Math.abs(vz) > 0.001)) {
+        const targetRotation = Math.atan2(vx, vz);
+        let diff = targetRotation - avatar.rotation.y;
+        while (diff < -Math.PI) diff += Math.PI * 2;
+        while (diff > Math.PI) diff -= Math.PI * 2;
+        avatar.rotation.y += diff * 0.15;
+    }
+}
+
+setInterval(pollSensor, 70);
+pollSensor();
+
+function animate() {
+    requestAnimationFrame(animate);
+    moveAvatar();
+    
+    if (avatar) {
+        // Find current offset so user can still orbit/zoom
+        const offset = new THREE.Vector3().subVectors(camera.position, controls.target);
+        controls.target.copy(avatar.position);
+        camera.position.copy(controls.target).add(offset);
+        controls.update();
+    }
+    
+    renderer.render(scene, camera);
+}
+
+animate();
+
+window.addEventListener('resize', function () {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+});
+</script>
+</body>
+</html>
