@@ -66,7 +66,7 @@ The project showcases how physical sensor movements can be translated into real-
 
 ---
 <p align="center">
-<img src="images/architecture.png" width="800">
+<img src="architecture.png" width="800">
 </p>
 
 #  Working Principle
@@ -167,7 +167,11 @@ The avatar will load and respond to live sensor movements.
 
 - 
 <p align="center">
-<img src="images/dashboard.png" width="750">
+<img src="dashboard.png" width="750">
+</p>
+
+<p align="center">
+<img src="screen.png" width="750">
 </p>
 ### Distance Detection
 
