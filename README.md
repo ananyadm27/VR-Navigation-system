@@ -1,7 +1,7 @@
 # VR-Navigation-system
-# 🚀 IoT-Based Real-Time 3D Avatar Navigation using ESP32, MPU6050 & Three.js
+#  IoT-Based Real-Time 3D Avatar Navigation using ESP32, MPU6050 & Three.js
 
-## 📌 Project Overview
+##  Project Overview
 
 This project demonstrates a **real-time 3D avatar navigation system** that combines **IoT hardware** with **3D web visualization**. The system uses an **ESP32**, **MPU6050 Motion Sensor**, and **VL53L0X Time-of-Flight (ToF) Sensor** to capture real-world movements and control a virtual 3D avatar inside a browser using **Three.js**.
 
@@ -9,7 +9,7 @@ The project showcases how physical sensor movements can be translated into real-
 
 ---
 
-# 🎯 Features
+#  Features
 
 -  Real-time motion tracking using MPU6050
 -  Distance measurement using VL53L0X ToF Sensor
@@ -23,7 +23,7 @@ The project showcases how physical sensor movements can be translated into real-
 
 ---
 
-# 🛠 Technologies Used
+#  Technologies Used
 
 ### Hardware
 - ESP32 Development Board
@@ -41,7 +41,7 @@ The project showcases how physical sensor movements can be translated into real-
 
 ---
 
-# 🏗 System Architecture
+#  System Architecture
 
 ```text
               MPU6050
@@ -65,8 +65,11 @@ The project showcases how physical sensor movements can be translated into real-
 ```
 
 ---
+<p align="center">
+<img src="images/architecture.png" width="800">
+</p>
 
-# ⚙ Working Principle
+#  Working Principle
 
 1. MPU6050 continuously captures the motion and orientation of the sensor.
 2. VL53L0X measures the distance from nearby obstacles.
@@ -92,7 +95,7 @@ Project/
 
 ---
 
-# 📡 JSON Data Format
+#  JSON Data Format
 
 ```json
 {
@@ -105,7 +108,7 @@ Project/
 
 ---
 
-# ▶ How to Run
+#  How to Run
 
 ### 1. Upload ESP32 Code
 
@@ -153,7 +156,7 @@ The avatar will load and respond to live sensor movements.
 
 ---
 
-# 📸 Demonstration
+#  Demonstration
 
 ### Motion Control
 
@@ -162,13 +165,17 @@ The avatar will load and respond to live sensor movements.
 - Tilt Forward → Avatar moves Forward
 - Tilt Backward → Avatar moves Backward
 
+- 
+<p align="center">
+<img src="images/dashboard.png" width="750">
+</p>
 ### Distance Detection
 
 The VL53L0X sensor continuously measures obstacle distance, enabling obstacle-aware movement.
 
 ---
 
-# 🌟 Applications
+#  Applications
 
 - Human Motion Tracking
 - AR/VR Interaction
@@ -193,7 +200,7 @@ The VL53L0X sensor continuously measures obstacle distance, enabling obstacle-aw
 
 ---
 
-# 📈 Project Highlights
+#  Project Highlights
 
 - Real-Time IoT Communication
 - 3D Browser-Based Visualization
@@ -204,7 +211,7 @@ The VL53L0X sensor continuously measures obstacle distance, enabling obstacle-aw
 
 ---
 
-# 👨‍💻 Author
+#  Author
 
 **Ananya Mavinakatti**
 
