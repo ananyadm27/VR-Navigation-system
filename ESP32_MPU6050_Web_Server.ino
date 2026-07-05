@@ -3,8 +3,8 @@
 #include <Wire.h>
 #include <Adafruit_VL53L0X.h>
 
-const char* ssid = "Ananya";
-const char* password = "ananya2005";
+const char* ssid = "your ssid";
+const char* password = "password";
 
 WebServer server(80);
 
