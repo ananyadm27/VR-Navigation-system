@@ -167,7 +167,7 @@ The avatar will load and respond to live sensor movements.
 
 - 
 <p align="center">
-<img src="dashboard.png" width="750">
+<img src="Dashboard.png" width="750">
 </p>
 
 <p align="center">
